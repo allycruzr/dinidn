@@ -61,7 +61,7 @@ function sgmlToXml(sgml: string): string {
   );
 }
 
-/** Parse OFX date like "20260328120000[-3:BRT]" or "20260328" → "2026-03-28". */
+// Parse an OFX date (YYYYMMDDHHMMSS with optional timezone, or YYYYMMDD) to YYYY-MM-DD.
 function parseOfxDate(raw: string | null | undefined): string {
   if (!raw) return "";
   const digits = raw.replace(/\D/g, "").slice(0, 8);

@@ -20,15 +20,6 @@ import type {
 import { supabase } from "@/lib/supabase";
 import { parseOfx } from "@/lib/ofxParser";
 
-export interface BelvoLink {
-  id: string;
-  belvoLinkId: string;
-  institution: string;
-  status: string;
-  createdAt: string;
-  lastSyncedAt: string | null;
-}
-
 export interface ImportOfxResult {
   accountsImported: number;
   transactionsImported: number;
@@ -45,10 +36,7 @@ export interface DataContextValue {
   patrimony: PatrimonySnapshot[];
   monthlyData: MonthlyData[];
   categorySpending: CategorySpending[];
-  belvoLinks: BelvoLink[];
   refresh: () => Promise<void>;
-  registerBelvoLink: (belvoLinkId: string, institution: string) => Promise<void>;
-  syncLink: (belvoLinkId: string) => Promise<void>;
   importOfx: (file: File) => Promise<ImportOfxResult>;
   signOut: () => Promise<void>;
 }
@@ -166,17 +154,6 @@ function mapPatrimony(row: any): PatrimonySnapshot {
   };
 }
 
-function mapBelvoLink(row: any): BelvoLink {
-  return {
-    id: row.id,
-    belvoLinkId: row.belvo_link_id,
-    institution: row.institution,
-    status: row.status,
-    createdAt: row.created_at,
-    lastSyncedAt: row.last_synced_at,
-  };
-}
-
 /* eslint-enable @typescript-eslint/no-explicit-any */
 
 // ---------- Provider ----------
@@ -190,47 +167,40 @@ export function DataProvider({ children }: { children: ReactNode }) {
   const [invoices, setInvoices] = useState<Invoice[]>([]);
   const [goals, setGoals] = useState<Goal[]>([]);
   const [patrimony, setPatrimony] = useState<PatrimonySnapshot[]>([]);
-  const [belvoLinks, setBelvoLinks] = useState<BelvoLink[]>([]);
 
   const refresh = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      const [catRes, accRes, invRes, goalRes, patRes, linkRes, txRes] =
-        await Promise.all([
-          supabase.from("categories").select("*"),
-          supabase
-            .from("accounts")
-            .select("*")
-            .order("created_at", { ascending: true }),
-          supabase
-            .from("invoices")
-            .select("*")
-            .order("due_date", { ascending: false }),
-          supabase
-            .from("goals")
-            .select("*")
-            .order("created_at", { ascending: true }),
-          supabase
-            .from("patrimony_snapshots")
-            .select("*")
-            .order("reference_month", { ascending: true }),
-          supabase
-            .from("belvo_links")
-            .select("*")
-            .order("created_at", { ascending: true }),
-          supabase
-            .from("transactions")
-            .select("*")
-            .order("date", { ascending: false }),
-        ]);
+      const [catRes, accRes, invRes, goalRes, patRes, txRes] = await Promise.all([
+        supabase.from("categories").select("*"),
+        supabase
+          .from("accounts")
+          .select("*")
+          .order("created_at", { ascending: true }),
+        supabase
+          .from("invoices")
+          .select("*")
+          .order("due_date", { ascending: false }),
+        supabase
+          .from("goals")
+          .select("*")
+          .order("created_at", { ascending: true }),
+        supabase
+          .from("patrimony_snapshots")
+          .select("*")
+          .order("reference_month", { ascending: true }),
+        supabase
+          .from("transactions")
+          .select("*")
+          .order("date", { ascending: false }),
+      ]);
 
       if (catRes.error) throw catRes.error;
       if (accRes.error) throw accRes.error;
       if (invRes.error) throw invRes.error;
       if (goalRes.error) throw goalRes.error;
       if (patRes.error) throw patRes.error;
-      if (linkRes.error) throw linkRes.error;
       if (txRes.error) throw txRes.error;
 
       const mappedCategories = (catRes.data ?? []).map(mapCategory);
@@ -241,7 +211,6 @@ export function DataProvider({ children }: { children: ReactNode }) {
       setInvoices((invRes.data ?? []).map(mapInvoice));
       setGoals((goalRes.data ?? []).map((r) => mapGoal(r, categoriesById)));
       setPatrimony((patRes.data ?? []).map(mapPatrimony));
-      setBelvoLinks((linkRes.data ?? []).map(mapBelvoLink));
       setTransactions(
         (txRes.data ?? []).map((r) => mapTransaction(r, categoriesById)),
       );
@@ -255,44 +224,6 @@ export function DataProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     refresh();
   }, [refresh]);
-
-  const getAuthHeaders = useCallback(async () => {
-    const { data } = await supabase.auth.getSession();
-    const token = data.session?.access_token;
-    if (!token) throw new Error("Sessao nao encontrada. Faca login novamente.");
-    return { Authorization: `Bearer ${token}` };
-  }, []);
-
-  const registerBelvoLink = useCallback(
-    async (belvoLinkId: string, institution: string) => {
-      const headers = await getAuthHeaders();
-      const { error: regError } = await supabase.functions.invoke(
-        "belvo-register-link",
-        { body: { link_id: belvoLinkId, institution }, headers },
-      );
-      if (regError) throw regError;
-      // Kick off initial sync (fire-and-refresh)
-      await supabase.functions.invoke("belvo-sync", {
-        body: { belvo_link_id: belvoLinkId },
-        headers,
-      });
-      await refresh();
-    },
-    [getAuthHeaders, refresh],
-  );
-
-  const syncLink = useCallback(
-    async (belvoLinkId: string) => {
-      const headers = await getAuthHeaders();
-      const { error: syncError } = await supabase.functions.invoke(
-        "belvo-sync",
-        { body: { belvo_link_id: belvoLinkId }, headers },
-      );
-      if (syncError) throw syncError;
-      await refresh();
-    },
-    [getAuthHeaders, refresh],
-  );
 
   const importOfx = useCallback(
     async (file: File): Promise<ImportOfxResult> => {
@@ -328,7 +259,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
 
         const accountRow = {
           user_id: userId,
-          belvo_account_id: externalAccountId,
+          external_id: externalAccountId,
           institution: institutionName,
           name: ofxAcc.type === "CREDIT"
             ? `Cartao ${ofxAcc.accountId.slice(-4)}`
@@ -342,7 +273,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
 
         const { data: upsertedAccount, error: accError } = await supabase
           .from("accounts")
-          .upsert(accountRow, { onConflict: "belvo_account_id" })
+          .upsert(accountRow, { onConflict: "external_id" })
           .select("id")
           .single();
 
@@ -358,7 +289,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
           .map((tx) => ({
             user_id: userId,
             account_id: upsertedAccount.id,
-            belvo_transaction_id: `ofx:${ofxAcc.bankId || "unknown"}:${ofxAcc.accountId}:${tx.fitId}`,
+            external_id: `ofx:${ofxAcc.bankId || "unknown"}:${ofxAcc.accountId}:${tx.fitId}`,
             description: tx.description || "(sem descricao)",
             amount: tx.amount,
             type: tx.type,
@@ -370,11 +301,9 @@ export function DataProvider({ children }: { children: ReactNode }) {
         if (txRows.length > 0) {
           const { error: txError } = await supabase
             .from("transactions")
-            .upsert(txRows, { onConflict: "belvo_transaction_id" });
+            .upsert(txRows, { onConflict: "external_id" });
           if (txError) {
-            throw new Error(
-              `Erro ao salvar transacoes: ${txError.message}`,
-            );
+            throw new Error(`Erro ao salvar transacoes: ${txError.message}`);
           }
           transactionsImported += txRows.length;
         }
@@ -462,10 +391,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
         patrimony,
         monthlyData,
         categorySpending,
-        belvoLinks,
         refresh,
-        registerBelvoLink,
-        syncLink,
         importOfx,
         signOut,
       }}

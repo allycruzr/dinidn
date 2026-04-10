@@ -8,35 +8,32 @@ import { Landmark, TrendingUp, RefreshCw, Database } from "lucide-react";
 
 
 export default function AccountsPage() {
-  const { accounts, belvoLinks } = useData();
+  const { accounts } = useData();
   const checkingAccounts = accounts.filter((a) => a.type !== "CREDIT");
   const totalChecking = checkingAccounts.reduce((s, a) => s + a.balance, 0);
   const totalAll = totalChecking;
 
   // Group by institution
   const institutions = [...new Set(accounts.map((a) => a.institution))];
-  const institutionStatus = institutions.reduce<Record<string, "Conectado" | "Atenção">>((acc, institution) => {
-    const instLinks = belvoLinks.filter((link) => link.institution === institution);
-    acc[institution] = instLinks.length > 0 && instLinks.every((link) => link.status === "valid")
-      ? "Conectado"
-      : "Atenção";
+  const institutionStatus = institutions.reduce<Record<string, "Importada" | "Sem dados">>((acc, institution) => {
+    const instAccounts = accounts.filter((a) => a.institution === institution);
+    acc[institution] = instAccounts.length > 0 ? "Importada" : "Sem dados";
     return acc;
   }, {});
-  const healthyConnectors = Object.values(institutionStatus).filter((status) => status === "Conectado").length;
+  const healthyConnectors = Object.values(institutionStatus).filter((status) => status === "Importada").length;
 
   const institutionMeta = institutions.reduce<
-    Record<string, { products: string; description: string; lastSync: string; status: "Conectado" | "Atenção" }>
+    Record<string, { products: string; description: string; lastSync: string; status: "Importada" | "Sem dados" }>
   >((acc, institution) => {
     const instAccounts = accounts.filter((a) => a.institution === institution);
-    const instLinks = belvoLinks.filter((link) => link.institution === institution);
 
     const accountTypes = instAccounts.map((a) =>
       a.type === "CREDIT" ? "Cartão de crédito" : a.type === "SAVINGS" ? "Poupança" : "Conta",
     );
     const products = [...new Set(accountTypes)].join(", ") || "—";
 
-    const lastSyncDates = instLinks
-      .map((link) => link.lastSyncedAt)
+    const lastSyncDates = instAccounts
+      .map((a) => a.lastSyncedAt)
       .filter(Boolean) as string[];
     const latestSync =
       lastSyncDates.length > 0
@@ -45,7 +42,7 @@ export default function AccountsPage() {
 
     acc[institution] = {
       products,
-      description: `${instLinks.length} conexão(ões) via Open Finance.`,
+      description: `${instAccounts.length} conta(s) importada(s) via OFX.`,
       lastSync: latestSync,
       status: institutionStatus[institution],
     };
@@ -168,7 +165,7 @@ export default function AccountsPage() {
             <div className="space-y-3">
               {institutions.map((inst) => {
                 const meta = institutionMeta[inst];
-                const isOk = meta?.status === 'Conectado';
+                const isOk = meta?.status === 'Importada';
                 return (
                   <Card key={inst} className="border-border/50">
                     <CardContent className="p-4 space-y-2">
