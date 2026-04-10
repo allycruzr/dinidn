@@ -13,6 +13,7 @@ import {
   CheckCircle2,
   AlertCircle,
   Loader2,
+  Trash2,
 } from "lucide-react";
 
 interface ImportLogEntry {
@@ -32,8 +33,9 @@ function slugify(s: string): string {
 }
 
 export default function ConnectionsPage() {
-  const { accounts, importOfx, importXlsx, loading } = useData();
+  const { accounts, importOfx, importXlsx, deleteAccount, loading } = useData();
   const [importing, setImporting] = useState(false);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [log, setLog] = useState<ImportLogEntry[]>([]);
 
@@ -70,6 +72,25 @@ export default function ConnectionsPage() {
     } finally {
       setImporting(false);
       if (ofxInputRef.current) ofxInputRef.current.value = "";
+    }
+  };
+
+  const handleDeleteAccount = async (accountId: string, accountLabel: string) => {
+    if (
+      !window.confirm(
+        `Deletar "${accountLabel}"? Essa acao tambem remove TODAS as transacoes dessa conta. Nao da pra desfazer.`,
+      )
+    ) {
+      return;
+    }
+    setDeletingId(accountId);
+    setError(null);
+    try {
+      await deleteAccount(accountId);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setDeletingId(null);
     }
   };
 
@@ -354,25 +375,46 @@ export default function ConnectionsPage() {
               </h3>
             </div>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-              {accounts.map((a) => (
-                <Card key={a.id} className="border-border/50">
-                  <CardContent className="p-4 flex items-center justify-between">
-                    <div>
-                      <p className="font-display font-bold text-sm">
-                        {a.institution}
-                      </p>
-                      <p className="text-xs text-muted-foreground">{a.name}</p>
-                    </div>
-                    <Badge variant="secondary" className="text-xs">
-                      {a.type === "CREDIT"
-                        ? "Cartao"
-                        : a.type === "SAVINGS"
-                        ? "Investimento"
-                        : "Corrente"}
-                    </Badge>
-                  </CardContent>
-                </Card>
-              ))}
+              {accounts.map((a) => {
+                const isDeleting = deletingId === a.id;
+                return (
+                  <Card key={a.id} className="border-border/50">
+                    <CardContent className="p-4 flex items-center justify-between gap-3">
+                      <div className="min-w-0 flex-1">
+                        <p className="font-display font-bold text-sm truncate">
+                          {a.institution}
+                        </p>
+                        <p className="text-xs text-muted-foreground truncate">
+                          {a.name}
+                        </p>
+                      </div>
+                      <Badge variant="secondary" className="text-xs shrink-0">
+                        {a.type === "CREDIT"
+                          ? "Cartao"
+                          : a.type === "SAVINGS"
+                          ? "Investimento"
+                          : "Corrente"}
+                      </Badge>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        onClick={() =>
+                          handleDeleteAccount(a.id, `${a.institution} - ${a.name}`)
+                        }
+                        disabled={isDeleting}
+                        className="h-8 w-8 text-muted-foreground hover:text-destructive shrink-0"
+                        aria-label={`Deletar ${a.institution} ${a.name}`}
+                      >
+                        {isDeleting ? (
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                        ) : (
+                          <Trash2 className="h-4 w-4" />
+                        )}
+                      </Button>
+                    </CardContent>
+                  </Card>
+                );
+              })}
             </div>
           </div>
         )}

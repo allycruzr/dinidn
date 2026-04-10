@@ -51,6 +51,7 @@ export interface DataContextValue {
   refresh: () => Promise<void>;
   importOfx: (file: File) => Promise<ImportOfxResult>;
   importXlsx: (file: File, options: ImportXlsxOptions) => Promise<ImportXlsxResult>;
+  deleteAccount: (accountId: string) => Promise<void>;
   signOut: () => Promise<void>;
 }
 
@@ -341,11 +342,13 @@ export function DataProvider({ children }: { children: ReactNode }) {
 
       const externalAccountId = `xlsx:${options.accountIdentifier}`;
 
-      // Compute running balance from transactions (last transaction date = most recent)
-      const totalAmount = parsed.transactions.reduce((s, t) => s + t.amount, 0);
+      // Use the balance parsed from XLSX metadata ("Saldo atual") if present.
+      // Fall back to 0 — transaction sum is NOT the current balance, it's the
+      // period movement.
+      const rawBalance = parsed.currentBalance ?? 0;
       const balance = options.accountType === "CREDIT"
-        ? -Math.abs(totalAmount)
-        : totalAmount;
+        ? -Math.abs(rawBalance)
+        : rawBalance;
 
       const accountRow = {
         user_id: userId,
@@ -371,18 +374,27 @@ export function DataProvider({ children }: { children: ReactNode }) {
 
       // For XLSX we don't have stable FITIDs. Use a hash-ish composite key
       // from date + description + amount so re-importing the same row is a no-op.
+      // XLSX has no stable FITID. Build external_id from date+desc+amount
+      // and append a counter if the same key repeats in this batch (e.g. two
+      // iFood orders on the same day for the same price).
+      const keyCounts = new Map<string, number>();
       const txRows = parsed.transactions.map((tx) => {
         const descHash = tx.description
           .slice(0, 40)
           .replace(/\s+/g, "_")
           .replace(/[^\w]/g, "");
+        const baseKey = `xlsx:${options.accountIdentifier}:${tx.date}:${descHash}:${tx.amount}`;
+        const count = (keyCounts.get(baseKey) ?? 0) + 1;
+        keyCounts.set(baseKey, count);
+        const externalId = count === 1 ? baseKey : `${baseKey}:n${count}`;
         return {
           user_id: userId,
           account_id: upsertedAccount.id,
-          external_id: `xlsx:${options.accountIdentifier}:${tx.date}:${descHash}:${tx.amount}`,
+          external_id: externalId,
           description: tx.description || "(sem descricao)",
           amount: tx.amount,
           type: tx.amount >= 0 ? "CREDIT" : "DEBIT",
+          category_name: tx.category ?? null,
           date: tx.date,
           status: "CONFIRMED",
           is_recurring: false,
@@ -400,6 +412,21 @@ export function DataProvider({ children }: { children: ReactNode }) {
 
       await refresh();
       return { transactionsImported: txRows.length };
+    },
+    [refresh],
+  );
+
+  const deleteAccount = useCallback(
+    async (accountId: string) => {
+      // Transactions and invoices have ON DELETE CASCADE → auto-removed
+      const { error: delError } = await supabase
+        .from("accounts")
+        .delete()
+        .eq("id", accountId);
+      if (delError) {
+        throw new Error(`Erro ao deletar conta: ${delError.message}`);
+      }
+      await refresh();
     },
     [refresh],
   );
@@ -483,6 +510,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
         refresh,
         importOfx,
         importXlsx,
+        deleteAccount,
         signOut,
       }}
     >
