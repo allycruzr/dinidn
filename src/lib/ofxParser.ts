@@ -49,13 +49,24 @@ function escapeXml(s: string): string {
  * Converts SGML-style OFX (leaf tags without closing tags) to valid XML.
  * Leaf tags look like `<TAG>value` with text until end-of-line.
  * Container tags like `<STMTTRN>` stay as-is and have matching `</STMTTRN>`.
+ *
+ * Safe to run on OFX 2.x (XML-native) content: if a tag already has a closing
+ * tag right after the value, the conversion becomes a no-op for that tag.
  */
 function sgmlToXml(sgml: string): string {
   return sgml.replace(
     /<([A-Z][A-Z0-9.]*)>([^<\r\n]+)/g,
-    (_match, tag: string, value: string) => {
+    (match: string, tag: string, value: string, offset: number) => {
       const trimmed = value.trim();
-      if (!trimmed) return _match;
+      if (!trimmed) return match;
+
+      // If the original already has </TAG> immediately after, leave untouched
+      const closingTag = `</${tag}>`;
+      const after = sgml.substring(offset + match.length, offset + match.length + closingTag.length);
+      if (after === closingTag) {
+        return match;
+      }
+
       return `<${tag}>${escapeXml(trimmed)}</${tag}>`;
     },
   );
@@ -83,6 +94,10 @@ function mapAccountType(ofxType: string | null): OfxAccountType {
   return "CHECKING";
 }
 
+function isOfxXml(content: string): boolean {
+  return /<\?xml/i.test(content) || /<\?OFX/i.test(content);
+}
+
 export function parseOfx(content: string): OfxParseResult {
   // Strip everything before <OFX>
   const ofxStart = content.indexOf("<OFX>");
@@ -90,7 +105,9 @@ export function parseOfx(content: string): OfxParseResult {
     throw new Error("Arquivo OFX invalido: tag <OFX> nao encontrada");
   }
   const body = content.slice(ofxStart);
-  const xml = sgmlToXml(body);
+  // OFX 2.x is already valid XML; OFX 1.x SGML needs conversion.
+  // The SGML converter is also safe on XML content (checks for existing closing tag).
+  const xml = isOfxXml(content) ? body : sgmlToXml(body);
 
   const doc = new DOMParser().parseFromString(xml, "text/xml");
   const parserError = doc.getElementsByTagName("parsererror")[0];

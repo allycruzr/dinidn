@@ -19,9 +19,21 @@ import type {
 } from "@/types";
 import { supabase } from "@/lib/supabase";
 import { parseOfx } from "@/lib/ofxParser";
+import { parseXlsx } from "@/lib/xlsxParser";
 
 export interface ImportOfxResult {
   accountsImported: number;
+  transactionsImported: number;
+}
+
+export interface ImportXlsxOptions {
+  institution: string;
+  accountName: string;
+  accountType: "CHECKING" | "SAVINGS" | "CREDIT";
+  accountIdentifier: string; // stable user-provided id (e.g. "BTG-corrente" or "BTG-cartao-black")
+}
+
+export interface ImportXlsxResult {
   transactionsImported: number;
 }
 
@@ -38,6 +50,7 @@ export interface DataContextValue {
   categorySpending: CategorySpending[];
   refresh: () => Promise<void>;
   importOfx: (file: File) => Promise<ImportOfxResult>;
+  importXlsx: (file: File, options: ImportXlsxOptions) => Promise<ImportXlsxResult>;
   signOut: () => Promise<void>;
 }
 
@@ -315,6 +328,82 @@ export function DataProvider({ children }: { children: ReactNode }) {
     [refresh],
   );
 
+  const importXlsx = useCallback(
+    async (file: File, options: ImportXlsxOptions): Promise<ImportXlsxResult> => {
+      const parsed = await parseXlsx(file);
+
+      const { data: userData, error: userError } = await supabase.auth.getUser();
+      if (userError || !userData?.user) {
+        throw new Error("Sessao nao encontrada. Faca login novamente.");
+      }
+      const userId = userData.user.id;
+      const now = new Date().toISOString();
+
+      const externalAccountId = `xlsx:${options.accountIdentifier}`;
+
+      // Compute running balance from transactions (last transaction date = most recent)
+      const totalAmount = parsed.transactions.reduce((s, t) => s + t.amount, 0);
+      const balance = options.accountType === "CREDIT"
+        ? -Math.abs(totalAmount)
+        : totalAmount;
+
+      const accountRow = {
+        user_id: userId,
+        external_id: externalAccountId,
+        institution: options.institution,
+        name: options.accountName,
+        type: options.accountType,
+        balance,
+        currency: "BRL",
+        is_active: true,
+        last_synced_at: now,
+      };
+
+      const { data: upsertedAccount, error: accError } = await supabase
+        .from("accounts")
+        .upsert(accountRow, { onConflict: "external_id" })
+        .select("id")
+        .single();
+
+      if (accError) {
+        throw new Error(`Erro ao salvar conta: ${accError.message}`);
+      }
+
+      // For XLSX we don't have stable FITIDs. Use a hash-ish composite key
+      // from date + description + amount so re-importing the same row is a no-op.
+      const txRows = parsed.transactions.map((tx) => {
+        const descHash = tx.description
+          .slice(0, 40)
+          .replace(/\s+/g, "_")
+          .replace(/[^\w]/g, "");
+        return {
+          user_id: userId,
+          account_id: upsertedAccount.id,
+          external_id: `xlsx:${options.accountIdentifier}:${tx.date}:${descHash}:${tx.amount}`,
+          description: tx.description || "(sem descricao)",
+          amount: tx.amount,
+          type: tx.amount >= 0 ? "CREDIT" : "DEBIT",
+          date: tx.date,
+          status: "CONFIRMED",
+          is_recurring: false,
+        };
+      });
+
+      if (txRows.length > 0) {
+        const { error: txError } = await supabase
+          .from("transactions")
+          .upsert(txRows, { onConflict: "external_id" });
+        if (txError) {
+          throw new Error(`Erro ao salvar transacoes: ${txError.message}`);
+        }
+      }
+
+      await refresh();
+      return { transactionsImported: txRows.length };
+    },
+    [refresh],
+  );
+
   const signOut = useCallback(async () => {
     await supabase.auth.signOut();
   }, []);
@@ -393,6 +482,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
         categorySpending,
         refresh,
         importOfx,
+        importXlsx,
         signOut,
       }}
     >
