@@ -1,18 +1,17 @@
 // belvo-widget-token
-// Exchanges backend Belvo credentials for a short-lived widget access token
-// that the frontend can use to initialize the Belvo Connect Widget.
+// Exchanges backend Belvo credentials for a short-lived widget access token.
 //
-// Flow:
-// 1. Authenticated user (verify_jwt=true) calls POST /functions/v1/belvo-widget-token
-// 2. This function calls Belvo POST /api/token/ with our secret_id/password
-// 3. Returns { access: "..." } — a JWT the widget will use
+// NOTE: verify_jwt is DISABLED at gateway level because this project had
+// persistent 401 "Invalid JWT" errors from the gateway. We validate the user
+// manually inside the function by calling supabase.auth.getUser(jwt).
 //
-// Secrets required (set in Supabase Project Settings > Edge Functions > Secrets):
+// Secrets required:
 //   BELVO_SECRET_ID
 //   BELVO_SECRET_PASSWORD
-//   BELVO_ENV  ("sandbox" | "production")
+//   BELVO_ENV
 
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
+import { createClient } from "jsr:@supabase/supabase-js@2";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -43,14 +42,27 @@ Deno.serve(async (req: Request) => {
     return jsonResponse({ error: "method_not_allowed" }, 405);
   }
 
+  // Manual auth: read JWT from header and validate
+  const authHeader = req.headers.get("Authorization");
+  if (!authHeader?.startsWith("Bearer ")) {
+    return jsonResponse({ error: "missing_authorization" }, 401);
+  }
+  const jwt = authHeader.slice("Bearer ".length);
+
+  const supabase = createClient(
+    Deno.env.get("SUPABASE_URL")!,
+    Deno.env.get("SUPABASE_ANON_KEY")!,
+  );
+  const { data: userData, error: userError } = await supabase.auth.getUser(jwt);
+  if (userError || !userData?.user) {
+    return jsonResponse({ error: "unauthorized", detail: userError?.message }, 401);
+  }
+
   const secretId = Deno.env.get("BELVO_SECRET_ID");
   const secretPassword = Deno.env.get("BELVO_SECRET_PASSWORD");
 
   if (!secretId || !secretPassword) {
-    return jsonResponse(
-      { error: "missing_belvo_credentials" },
-      500,
-    );
+    return jsonResponse({ error: "missing_belvo_credentials" }, 500);
   }
 
   try {
@@ -60,8 +72,7 @@ Deno.serve(async (req: Request) => {
       body: JSON.stringify({
         id: secretId,
         password: secretPassword,
-        scopes:
-          "read_institutions,write_links,read_consents,write_consents,read_consents_detail",
+        scopes: "read_institutions,write_links,read_consents,write_consents",
       }),
     });
 

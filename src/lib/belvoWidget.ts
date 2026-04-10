@@ -60,6 +60,17 @@ export async function openBelvoWidget(options: OpenBelvoWidgetOptions): Promise<
     throw new Error("belvoSDK not available after script load");
   }
 
+  // The Belvo widget requires <div id="belvo"></div> to exist in the DOM.
+  // Create it if missing; clear it if already there (so re-opens start fresh).
+  let container = document.getElementById("belvo");
+  if (!container) {
+    container = document.createElement("div");
+    container.id = "belvo";
+    document.body.appendChild(container);
+  } else {
+    container.innerHTML = "";
+  }
+
   const widget = window.belvoSDK.createWidget(options.accessToken, {
     locale: "pt",
     country_codes: [options.country ?? "BR"],

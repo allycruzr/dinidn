@@ -18,6 +18,7 @@ import type {
   CategorySpending,
 } from "@/types";
 import { supabase } from "@/lib/supabase";
+import { parseOfx } from "@/lib/ofxParser";
 
 export interface BelvoLink {
   id: string;
@@ -26,6 +27,11 @@ export interface BelvoLink {
   status: string;
   createdAt: string;
   lastSyncedAt: string | null;
+}
+
+export interface ImportOfxResult {
+  accountsImported: number;
+  transactionsImported: number;
 }
 
 export interface DataContextValue {
@@ -43,8 +49,27 @@ export interface DataContextValue {
   refresh: () => Promise<void>;
   registerBelvoLink: (belvoLinkId: string, institution: string) => Promise<void>;
   syncLink: (belvoLinkId: string) => Promise<void>;
+  importOfx: (file: File) => Promise<ImportOfxResult>;
   signOut: () => Promise<void>;
 }
+
+const BR_BANK_NAMES: Record<string, string> = {
+  "001": "Banco do Brasil",
+  "033": "Santander",
+  "077": "Inter",
+  "104": "Caixa",
+  "208": "BTG Pactual",
+  "212": "Banco Original",
+  "218": "BS2",
+  "237": "Bradesco",
+  "260": "Nubank",
+  "336": "C6 Bank",
+  "341": "Itau",
+  "380": "PicPay",
+  "422": "Safra",
+  "655": "Votorantim",
+  "745": "Citibank",
+};
 
 const DataContext = createContext<DataContextValue | undefined>(undefined);
 
@@ -231,30 +256,132 @@ export function DataProvider({ children }: { children: ReactNode }) {
     refresh();
   }, [refresh]);
 
+  const getAuthHeaders = useCallback(async () => {
+    const { data } = await supabase.auth.getSession();
+    const token = data.session?.access_token;
+    if (!token) throw new Error("Sessao nao encontrada. Faca login novamente.");
+    return { Authorization: `Bearer ${token}` };
+  }, []);
+
   const registerBelvoLink = useCallback(
     async (belvoLinkId: string, institution: string) => {
+      const headers = await getAuthHeaders();
       const { error: regError } = await supabase.functions.invoke(
         "belvo-register-link",
-        { body: { link_id: belvoLinkId, institution } },
+        { body: { link_id: belvoLinkId, institution }, headers },
       );
       if (regError) throw regError;
       // Kick off initial sync (fire-and-refresh)
       await supabase.functions.invoke("belvo-sync", {
         body: { belvo_link_id: belvoLinkId },
+        headers,
       });
       await refresh();
     },
-    [refresh],
+    [getAuthHeaders, refresh],
   );
 
   const syncLink = useCallback(
     async (belvoLinkId: string) => {
+      const headers = await getAuthHeaders();
       const { error: syncError } = await supabase.functions.invoke(
         "belvo-sync",
-        { body: { belvo_link_id: belvoLinkId } },
+        { body: { belvo_link_id: belvoLinkId }, headers },
       );
       if (syncError) throw syncError;
       await refresh();
+    },
+    [getAuthHeaders, refresh],
+  );
+
+  const importOfx = useCallback(
+    async (file: File): Promise<ImportOfxResult> => {
+      const content = await file.text();
+      const parsed = parseOfx(content);
+
+      const { data: userData, error: userError } = await supabase.auth.getUser();
+      if (userError || !userData?.user) {
+        throw new Error("Sessao nao encontrada. Faca login novamente.");
+      }
+      const userId = userData.user.id;
+      const now = new Date().toISOString();
+
+      let accountsImported = 0;
+      let transactionsImported = 0;
+
+      for (const stmt of parsed.statements) {
+        const ofxAcc = stmt.account;
+        if (!ofxAcc.accountId) continue;
+
+        const externalAccountId = `ofx:${ofxAcc.bankId || "unknown"}:${ofxAcc.accountId}`;
+        const institutionName =
+          BR_BANK_NAMES[ofxAcc.bankId] ??
+          (ofxAcc.type === "CREDIT"
+            ? "Cartao de credito"
+            : `Banco ${ofxAcc.bankId || "desconhecido"}`);
+
+        const balance = ofxAcc.balance != null
+          ? (ofxAcc.type === "CREDIT"
+              ? -Math.abs(ofxAcc.balance)
+              : ofxAcc.balance)
+          : 0;
+
+        const accountRow = {
+          user_id: userId,
+          belvo_account_id: externalAccountId,
+          institution: institutionName,
+          name: ofxAcc.type === "CREDIT"
+            ? `Cartao ${ofxAcc.accountId.slice(-4)}`
+            : `Conta ${ofxAcc.accountId}`,
+          type: ofxAcc.type,
+          balance,
+          currency: ofxAcc.currency || "BRL",
+          is_active: true,
+          last_synced_at: now,
+        };
+
+        const { data: upsertedAccount, error: accError } = await supabase
+          .from("accounts")
+          .upsert(accountRow, { onConflict: "belvo_account_id" })
+          .select("id")
+          .single();
+
+        if (accError) {
+          throw new Error(
+            `Erro ao salvar conta ${externalAccountId}: ${accError.message}`,
+          );
+        }
+        accountsImported++;
+
+        const txRows = stmt.transactions
+          .filter((tx) => !!tx.date && !!tx.fitId)
+          .map((tx) => ({
+            user_id: userId,
+            account_id: upsertedAccount.id,
+            belvo_transaction_id: `ofx:${ofxAcc.bankId || "unknown"}:${ofxAcc.accountId}:${tx.fitId}`,
+            description: tx.description || "(sem descricao)",
+            amount: tx.amount,
+            type: tx.type,
+            date: tx.date,
+            status: "CONFIRMED",
+            is_recurring: false,
+          }));
+
+        if (txRows.length > 0) {
+          const { error: txError } = await supabase
+            .from("transactions")
+            .upsert(txRows, { onConflict: "belvo_transaction_id" });
+          if (txError) {
+            throw new Error(
+              `Erro ao salvar transacoes: ${txError.message}`,
+            );
+          }
+          transactionsImported += txRows.length;
+        }
+      }
+
+      await refresh();
+      return { accountsImported, transactionsImported };
     },
     [refresh],
   );
@@ -339,6 +466,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
         refresh,
         registerBelvoLink,
         syncLink,
+        importOfx,
         signOut,
       }}
     >

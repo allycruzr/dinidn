@@ -66,21 +66,25 @@ Deno.serve(async (req: Request) => {
   }
 
   const authHeader = req.headers.get("Authorization");
-  if (!authHeader) {
+  if (!authHeader?.startsWith("Bearer ")) {
     return jsonResponse({ error: "missing_authorization" }, 401);
   }
+  const jwt = authHeader.slice("Bearer ".length);
 
-  const supabase = createClient(
-    Deno.env.get("SUPABASE_URL")!,
-    Deno.env.get("SUPABASE_ANON_KEY")!,
-    { global: { headers: { Authorization: authHeader } } },
-  );
+  const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
+  const supabaseAnonKey = Deno.env.get("SUPABASE_ANON_KEY")!;
 
-  const { data: userData, error: userError } = await supabase.auth.getUser();
+  const authClient = createClient(supabaseUrl, supabaseAnonKey);
+  const { data: userData, error: userError } = await authClient.auth.getUser(jwt);
   if (userError || !userData?.user) {
-    return jsonResponse({ error: "unauthorized" }, 401);
+    return jsonResponse({ error: "unauthorized", detail: userError?.message }, 401);
   }
   const userId = userData.user.id;
+
+  // User-scoped client for DB ops so RLS applies
+  const supabase = createClient(supabaseUrl, supabaseAnonKey, {
+    global: { headers: { Authorization: `Bearer ${jwt}` } },
+  });
 
   let body: { belvo_link_id?: string };
   try {

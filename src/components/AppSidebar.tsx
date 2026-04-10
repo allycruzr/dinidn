@@ -1,7 +1,8 @@
 import {
   LayoutDashboard, ArrowLeftRight, CreditCard, Landmark,
-  Tags, Target, TrendingUp, PieChart, FileBarChart, Database, Settings, LogOut
+  Tags, Target, TrendingUp, PieChart, FileBarChart, Upload, LogOut
 } from "lucide-react";
+import { useData } from "@/context/DataContext";
 import { NavLink } from "@/components/NavLink";
 import { useLocation } from "react-router-dom";
 import {
@@ -23,13 +24,14 @@ const planItems = [
   { title: "Projeções", url: "/projections", icon: TrendingUp },
   { title: "Patrimônio", url: "/patrimony", icon: PieChart },
   { title: "Relatórios", url: "/reports", icon: FileBarChart },
-  { title: "Open Finance", url: "/connections", icon: Database },
+  { title: "Importar extrato", url: "/connections", icon: Upload },
 ];
 
 export function AppSidebar() {
   const { state } = useSidebar();
   const collapsed = state === "collapsed";
   const location = useLocation();
+  const { signOut } = useData();
 
   const renderItems = (items: typeof mainItems) =>
     items.map((item) => (
@@ -81,9 +83,12 @@ export function AppSidebar() {
       <SidebarFooter className="border-t border-sidebar-border p-3">
         <SidebarMenu>
           <SidebarMenuItem>
-            <SidebarMenuButton className="text-muted-foreground hover:text-foreground">
-              <Settings className="mr-2 h-4 w-4" />
-              {!collapsed && <span>Configurações</span>}
+            <SidebarMenuButton
+              onClick={() => signOut()}
+              className="text-muted-foreground hover:text-foreground"
+            >
+              <LogOut className="mr-2 h-4 w-4" />
+              {!collapsed && <span>Sair</span>}
             </SidebarMenuButton>
           </SidebarMenuItem>
         </SidebarMenu>

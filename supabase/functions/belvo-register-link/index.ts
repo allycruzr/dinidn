@@ -1,10 +1,9 @@
 // belvo-register-link
 // Called by the frontend after the Belvo Connect Widget returns a successful link.
-// Persists the link to belvo_links table (idempotent via upsert on belvo_link_id)
-// and triggers an initial sync by invoking belvo-sync internally.
+// Persists the link to belvo_links table (idempotent via upsert on belvo_link_id).
 //
-// Request:  POST { link_id: string, institution: string }
-// Response: { belvo_link: row }
+// NOTE: verify_jwt is DISABLED at gateway level due to a project-specific
+// Edge Functions gateway issue. We validate the user manually inside.
 
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "jsr:@supabase/supabase-js@2";
@@ -32,19 +31,18 @@ Deno.serve(async (req: Request) => {
   }
 
   const authHeader = req.headers.get("Authorization");
-  if (!authHeader) {
+  if (!authHeader?.startsWith("Bearer ")) {
     return jsonResponse({ error: "missing_authorization" }, 401);
   }
+  const jwt = authHeader.slice("Bearer ".length);
 
-  const supabase = createClient(
-    Deno.env.get("SUPABASE_URL")!,
-    Deno.env.get("SUPABASE_ANON_KEY")!,
-    { global: { headers: { Authorization: authHeader } } },
-  );
+  const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
+  const supabaseAnonKey = Deno.env.get("SUPABASE_ANON_KEY")!;
 
-  const { data: userData, error: userError } = await supabase.auth.getUser();
+  const authClient = createClient(supabaseUrl, supabaseAnonKey);
+  const { data: userData, error: userError } = await authClient.auth.getUser(jwt);
   if (userError || !userData?.user) {
-    return jsonResponse({ error: "unauthorized" }, 401);
+    return jsonResponse({ error: "unauthorized", detail: userError?.message }, 401);
   }
 
   let body: { link_id?: string; institution?: string };
@@ -62,7 +60,12 @@ Deno.serve(async (req: Request) => {
     );
   }
 
-  const { data, error } = await supabase
+  // Use a user-scoped client for the insert so RLS policies apply
+  const userClient = createClient(supabaseUrl, supabaseAnonKey, {
+    global: { headers: { Authorization: `Bearer ${jwt}` } },
+  });
+
+  const { data, error } = await userClient
     .from("belvo_links")
     .upsert(
       {
