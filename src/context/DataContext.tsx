@@ -1,4 +1,4 @@
-import { createContext, useContext, useState, type ReactNode } from "react";
+import { createContext, useContext, useState, useMemo, type ReactNode } from "react";
 import type { Account, Transaction, Category, Invoice, Goal, PatrimonySnapshot, MonthlyData, CategorySpending } from "@/types";
 import {
   mockAccounts,
@@ -6,8 +6,6 @@ import {
   mockCategories,
   mockGoals,
   mockPatrimony,
-  mockMonthlyData,
-  mockCategorySpending,
   mockInvoices,
 } from "@/lib/mock-data";
 
@@ -98,7 +96,7 @@ const initialConnections: OpenFinanceConnection[] = [
   },
 ];
 
-const createTransactionId = (accountId: string) => `${accountId}-${Date.now()}-${Math.floor(Math.random() * 10000)}`;
+const createTransactionId = (connectionId: string, index: number) => `sync-${connectionId}-${index}`;
 
 const sampleDescriptions = {
   CHECKING: [
@@ -126,16 +124,16 @@ function formatSyncTime(date: Date) {
   return date.toISOString();
 }
 
-function buildTransaction(account: Account, categories: Category[], index: number): Transaction {
+function buildTransaction(account: Account, categories: Category[], index: number, connectionId: string): Transaction {
   const isCredit = account.type === "CREDIT";
   const descriptionList = isCredit ? sampleDescriptions.CREDIT : sampleDescriptions.CHECKING;
   const description = `${descriptionList[index % descriptionList.length]} - ${account.institution}`;
-  const amountBase = Math.round((Math.random() * 350 + 40) * 100) / 100;
-  const amount = isCredit ? -amountBase : Math.random() > 0.5 ? amountBase : -amountBase;
+  const amountBase = Math.round((150 + index * 47) * 100) / 100;
+  const amount = isCredit ? -amountBase : index % 2 === 0 ? amountBase : -amountBase;
   const category = categories[sampleCategoryIds[account.type][index % sampleCategoryIds[account.type].length]];
 
   return {
-    id: createTransactionId(account.id),
+    id: createTransactionId(connectionId, index),
     accountId: account.id,
     description,
     amount,
@@ -143,7 +141,7 @@ function buildTransaction(account: Account, categories: Category[], index: numbe
     category,
     date: new Date(Date.now() - index * 86400000).toISOString().split("T")[0],
     status: "CONFIRMED",
-    isRecurring: !isCredit && Math.random() > 0.6,
+    isRecurring: !isCredit && index % 3 === 0,
   };
 }
 
@@ -153,9 +151,52 @@ export function DataProvider({ children }: { children: ReactNode }) {
   const [categories] = useState<Category[]>(() => mockCategories.map((category) => ({ ...category })));
   const [invoices] = useState<Invoice[]>(() => mockInvoices.map((invoice) => ({ ...invoice })));
   const [goals] = useState<Goal[]>(() => mockGoals.map((goal) => ({ ...goal })));
-  const [patrimony] = useState<PatrimonySnapshot[]>(() => mockPatrimony.map((entry) => ({ ...entry })));
-  const [monthlyData] = useState<MonthlyData[]>(() => mockMonthlyData.map((entry) => ({ ...entry })));
-  const [categorySpending] = useState<CategorySpending[]>(() => mockCategorySpending.map((entry) => ({ ...entry })));
+  const [patrimony, setPatrimony] = useState<PatrimonySnapshot[]>(() => mockPatrimony.map((entry) => ({ ...entry })));
+
+  const monthlyData = useMemo<MonthlyData[]>(() => {
+    const byMonth = new Map<string, { income: number; expenses: number }>();
+    for (const t of transactions) {
+      const monthKey = t.date.slice(0, 7);
+      const entry = byMonth.get(monthKey) ?? { income: 0, expenses: 0 };
+      if (t.amount >= 0) {
+        entry.income += t.amount;
+      } else {
+        entry.expenses += Math.abs(t.amount);
+      }
+      byMonth.set(monthKey, entry);
+    }
+    return Array.from(byMonth.entries())
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([month, data]) => ({
+        month: new Date(month + "-01").toLocaleDateString("pt-BR", { month: "short" })
+          .replace(".", "")
+          .replace(/^\w/, (c) => c.toUpperCase()),
+        income: Math.round(data.income * 100) / 100,
+        expenses: Math.round(data.expenses * 100) / 100,
+        balance: Math.round((data.income - data.expenses) * 100) / 100,
+      }));
+  }, [transactions]);
+
+  const categorySpending = useMemo<CategorySpending[]>(() => {
+    const expenseTransactions = transactions.filter((t) => t.amount < 0 && t.category);
+    const totalExpenses = expenseTransactions.reduce((s, t) => s + Math.abs(t.amount), 0);
+    if (totalExpenses === 0) return [];
+
+    const byCategory = new Map<string, { name: string; icon: string; color: string; value: number }>();
+    for (const t of expenseTransactions) {
+      const cat = t.category!;
+      const entry = byCategory.get(cat.name) ?? { name: cat.name, icon: cat.icon, color: cat.color, value: 0 };
+      entry.value += Math.abs(t.amount);
+      byCategory.set(cat.name, entry);
+    }
+
+    return Array.from(byCategory.values())
+      .map((entry) => ({
+        ...entry,
+        percentage: Math.round((entry.value / totalExpenses) * 1000) / 10,
+      }))
+      .sort((a, b) => b.value - a.value);
+  }, [transactions]);
   const [openFinanceConnections, setOpenFinanceConnections] = useState<OpenFinanceConnection[]>(() => [...initialConnections]);
 
   const connectInstitution = async (connectionId: string) => {
@@ -169,41 +210,68 @@ export function DataProvider({ children }: { children: ReactNode }) {
   };
 
   const syncTransactions = async () => {
-    setOpenFinanceConnections((prevConnections) => {
-      const updatedConnections = prevConnections.map((connection) =>
-        connection.status === "CONNECTED"
-          ? { ...connection, lastSyncedAt: formatSyncTime(new Date()) }
-          : connection,
+    setOpenFinanceConnections((prev) =>
+      prev.map((c) =>
+        c.status === "CONNECTED"
+          ? { ...c, lastSyncedAt: formatSyncTime(new Date()) }
+          : c,
+      ),
+    );
+
+    const connectedConnections = openFinanceConnections.filter(
+      (c) => c.status === "CONNECTED",
+    );
+    const additions: Transaction[] = [];
+    connectedConnections.forEach((connection, index) => {
+      const account = accounts.find((a) => a.id === connection.accountId);
+      if (!account) return;
+      additions.push(buildTransaction(account, categories, index, connection.id));
+    });
+
+    if (additions.length === 0) return;
+
+    setTransactions((current) => {
+      const missing = additions.filter(
+        (newTx) => !current.some((tx) => tx.id === newTx.id),
+      );
+      if (missing.length === 0) return current;
+
+      setAccounts((currentAccounts) =>
+        currentAccounts.map((account) => {
+          const delta = missing
+            .filter((tx) => tx.accountId === account.id)
+            .reduce((sum, tx) => sum + tx.amount, 0);
+          return delta !== 0
+            ? { ...account, balance: account.balance + delta }
+            : account;
+        }),
       );
 
-      const additions: Transaction[] = [];
-      updatedConnections
-        .filter((connection) => connection.status === "CONNECTED")
-        .forEach((connection, index) => {
-          const account = accounts.find((a) => a.id === connection.accountId);
-          if (!account) return;
+      return [...current, ...missing];
+    });
 
-          const newTransaction = buildTransaction(account, categories, index);
-          additions.push(newTransaction);
-        });
+    setPatrimony((prev) => {
+      const now = new Date();
+      const refMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+      if (prev.some((p) => p.referenceMonth === refMonth)) return prev;
 
-      if (additions.length > 0) {
-        setTransactions((current) => {
-          const missing = additions.filter((newTx) => !current.some((tx) => tx.id === newTx.id));
-          return [...current, ...missing];
-        });
+      const totalAssets = accounts
+        .filter((a) => a.type !== "CREDIT")
+        .reduce((s, a) => s + a.balance, 0);
+      const totalLiabilities = accounts
+        .filter((a) => a.type === "CREDIT")
+        .reduce((s, a) => s + Math.abs(a.balance), 0);
 
-        setAccounts((current) =>
-          current.map((account) => {
-            const delta = additions
-              .filter((tx) => tx.accountId === account.id)
-              .reduce((sum, tx) => sum + tx.amount, 0);
-            return delta !== 0 ? { ...account, balance: account.balance + delta } : account;
-          }),
-        );
-      }
-
-      return updatedConnections;
+      return [
+        ...prev,
+        {
+          id: `p-sync-${refMonth}`,
+          referenceMonth: refMonth,
+          totalAssets,
+          totalLiabilities,
+          netWorth: totalAssets - totalLiabilities,
+        },
+      ];
     });
   };
 

@@ -88,7 +88,7 @@ export default function CardsPage() {
                 const pct = (used / limit) * 100;
                 const free = limit - used;
                 const currentInvoice = invoices.find(i => i.accountId === card.id && i.status === 'OPEN');
-                const nextInvoice = invoices.find(i => i.accountId === card.id && i.status === 'PAID');
+                const lastPaidInvoice = invoices.find(i => i.accountId === card.id && i.status === 'PAID');
 
                 return (
                   <Card key={card.id} className="border-border/50">
@@ -119,8 +119,8 @@ export default function CardsPage() {
                       <div className="space-y-0.5 text-xs text-muted-foreground">
                         <p>Limite: {formatCurrency(limit)}</p>
                         <p>Livre: {formatCurrency(free)}</p>
-                        {nextInvoice && (
-                          <p>Próx. fatura: {formatCurrency(nextInvoice.totalAmount)}</p>
+                        {lastPaidInvoice && (
+                          <p>Última fatura paga: {formatCurrency(lastPaidInvoice.totalAmount)}</p>
                         )}
                       </div>
                     </CardContent>

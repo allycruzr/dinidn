@@ -6,11 +6,6 @@ import { useData } from "@/context/DataContext";
 import { formatCurrency } from "@/lib/currency";
 import { Landmark, TrendingUp, RefreshCw, Database } from "lucide-react";
 
-const institutionMeta: Record<string, { products: string; description: string; lastSync: string; status: 'Conectado' | 'Atenção' }> = {
-  'Nubank': { products: 'Conta, cartão de crédito e pix', description: 'Canal prioritário para gastos recorrentes e uso diário.', lastSync: '29/03/2025, 09:24:00', status: 'Conectado' },
-  'BTG Pactual': { products: 'Conta, investimentos e cartão Black', description: 'Pronto para importar saldos, movimentações e posição consolidada.', lastSync: '29/03/2025, 09:18:00', status: 'Conectado' },
-  'Banco do Brasil': { products: 'Conta corrente e cartão', description: 'MVP usa dados demo; próxima etapa eh concluir consentimento e reconciliação.', lastSync: '28/03/2025, 20:10:00', status: 'Atenção' },
-};
 
 export default function AccountsPage() {
   const { accounts, openFinanceConnections } = useData();
@@ -26,6 +21,32 @@ export default function AccountsPage() {
     return acc;
   }, {});
   const healthyConnectors = Object.values(institutionStatus).filter((status) => status === "Conectado").length;
+
+  const institutionMeta = institutions.reduce<
+    Record<string, { products: string; description: string; lastSync: string; status: "Conectado" | "Atenção" }>
+  >((acc, institution) => {
+    const instConnections = openFinanceConnections.filter((c) => c.institution === institution);
+    const accountTypes = instConnections.map((c) =>
+      c.type === "CHECKING" ? "Conta" : "Cartão de crédito",
+    );
+    const products = [...new Set(accountTypes)].join(", ");
+
+    const lastSyncDates = instConnections
+      .map((c) => c.lastSyncedAt)
+      .filter(Boolean) as string[];
+    const latestSync =
+      lastSyncDates.length > 0
+        ? new Date(lastSyncDates.sort().reverse()[0]).toLocaleString("pt-BR")
+        : "Nunca";
+
+    acc[institution] = {
+      products,
+      description: `${instConnections.length} conexão(ões) configurada(s).`,
+      lastSync: latestSync,
+      status: institutionStatus[institution],
+    };
+    return acc;
+  }, {});
 
   return (
     <DashboardLayout title="Contas">

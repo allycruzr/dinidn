@@ -6,7 +6,9 @@ import { Link } from "react-router-dom";
 
 export function RecentTransactions() {
   const { transactions, accounts } = useData();
-  const recentTransactions = transactions.slice(0, 8);
+  const recentTransactions = [...transactions]
+    .sort((a, b) => b.date.localeCompare(a.date))
+    .slice(0, 8);
   const getAccount = (id: string) => accounts.find((a) => a.id === id);
 
   const formatDate = (dateStr: string) => {
@@ -36,7 +38,7 @@ export function RecentTransactions() {
           </div>
 
           <div className="divide-y divide-border">
-            {transactions.map((t) => {
+            {recentTransactions.map((t) => {
               const account = getAccount(t.accountId);
               return (
                 <div key={t.id} className="grid grid-cols-[80px_1fr_auto_auto] gap-4 items-center px-5 py-3 hover:bg-muted/30 transition-colors">

@@ -10,10 +10,14 @@ interface DashboardLayoutProps {
 }
 
 export function DashboardLayout({ children, title }: DashboardLayoutProps) {
-  const [isDark, setIsDark] = useState(true);
+  const [isDark, setIsDark] = useState(() => {
+    const stored = localStorage.getItem("dindin-theme-dark");
+    return stored !== null ? stored === "true" : true;
+  });
 
   useEffect(() => {
     document.documentElement.classList.toggle("dark", isDark);
+    localStorage.setItem("dindin-theme-dark", String(isDark));
   }, [isDark]);
 
   return (
