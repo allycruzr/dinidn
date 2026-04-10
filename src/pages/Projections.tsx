@@ -5,17 +5,16 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { formatCurrency } from "@/lib/currency";
 import { useState } from "react";
+import { useData } from "@/context/DataContext";
 
-// Generate projection data
-function generateProjection(months: number, avgIncome: number, avgExpense: number) {
+function generateProjection(months: number, avgIncome: number, avgExpense: number, startBalance: number) {
   const data = [];
-  let balance = 36493;
   for (let i = 0; i <= months; i++) {
     data.push({
-      month: i === 0 ? 'Hoje' : `Mês ${i}`,
-      optimistic: balance + i * (avgIncome * 1.2 - avgExpense * 0.8),
-      realistic: balance + i * (avgIncome - avgExpense),
-      pessimistic: balance + i * (avgIncome * 0.8 - avgExpense * 1.2),
+      month: i === 0 ? 'Hoje' : `Mes ${i}`,
+      optimistic: startBalance + i * (avgIncome * 1.2 - avgExpense * 0.8),
+      realistic: startBalance + i * (avgIncome - avgExpense),
+      pessimistic: startBalance + i * (avgIncome * 0.8 - avgExpense * 1.2),
     });
   }
   return data;
@@ -38,13 +37,23 @@ const CustomTooltip = ({ active, payload, label }: any) => {
 };
 
 export default function ProjectionsPage() {
+  const { accounts, monthlyData } = useData();
   const [monthlySavings, setMonthlySavings] = useState(2000);
   const [goalAmount, setGoalAmount] = useState(100000);
 
-  const projectionData = generateProjection(6, 15900, 11000);
+  const currentBalance = accounts
+    .filter((a) => a.type !== "CREDIT")
+    .reduce((s, a) => s + a.balance, 0);
 
-  const monthsToGoal = goalAmount > 0 && monthlySavings > 0
-    ? Math.ceil((goalAmount - 36493) / monthlySavings)
+  const avgIncome = monthlyData.length > 0
+    ? monthlyData.reduce((s, m) => s + m.income, 0) / monthlyData.length : 0;
+  const avgExpense = monthlyData.length > 0
+    ? monthlyData.reduce((s, m) => s + m.expenses, 0) / monthlyData.length : 0;
+
+  const projectionData = generateProjection(6, avgIncome, avgExpense, currentBalance);
+
+  const monthsToGoal = goalAmount > 0 && monthlySavings > 0 && goalAmount > currentBalance
+    ? Math.ceil((goalAmount - currentBalance) / monthlySavings)
     : 0;
 
   return (

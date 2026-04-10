@@ -79,7 +79,7 @@ export default function AccountsPage() {
             <CardContent className="p-5 flex items-center justify-between">
               <div>
                 <p className="text-xs text-muted-foreground">Investimentos</p>
-                <p className="text-2xl font-display font-bold mt-1">{formatCurrency(24850)}</p>
+                <p className="text-2xl font-display font-bold mt-1">{formatCurrency(accounts.filter((a) => a.type === 'SAVINGS').reduce((s, a) => s + a.balance, 0))}</p>
                 <p className="text-xs text-muted-foreground mt-1">Saldo de longo prazo</p>
               </div>
               <div className="h-10 w-10 rounded-lg bg-accent/10 flex items-center justify-center">

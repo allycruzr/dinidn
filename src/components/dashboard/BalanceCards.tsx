@@ -4,20 +4,23 @@ import { formatCurrency } from "@/lib/currency";
 import { Landmark, TrendingUp, CreditCard, BarChart3 } from "lucide-react";
 
 export function BalanceCards() {
-  const { accounts, invoices } = useData();
+  const { accounts, invoices, monthlyData } = useData();
   const checkingTotal = accounts
-    .filter((a) => a.type !== 'CREDIT')
+    .filter((a) => a.type === 'CHECKING')
     .reduce((s, a) => s + a.balance, 0);
 
-  const investmentBalance = 24850;
+  const investmentBalance = accounts
+    .filter((a) => a.type === 'SAVINGS')
+    .reduce((s, a) => s + a.balance, 0);
 
   const openInvoices = invoices
     .filter((i) => i.status === 'OPEN')
     .reduce((s, i) => s + i.totalAmount, 0);
 
-  const monthIncome = 15885.32;
-  const monthExpenses = 10690.15;
-  const savingsRate = ((monthIncome - monthExpenses) / monthIncome * 100);
+  const lastMonth = monthlyData[monthlyData.length - 1];
+  const monthIncome = lastMonth?.income ?? 0;
+  const monthExpenses = lastMonth?.expenses ?? 0;
+  const savingsRate = monthIncome > 0 ? ((monthIncome - monthExpenses) / monthIncome * 100) : 0;
 
   const cards = [
     {

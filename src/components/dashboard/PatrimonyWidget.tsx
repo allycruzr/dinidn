@@ -5,10 +5,25 @@ import { Area, AreaChart, ResponsiveContainer, XAxis, YAxis } from "recharts";
 
 export function PatrimonyWidget() {
   const { patrimony } = useData();
+
+  if (patrimony.length === 0) {
+    return (
+      <div className="space-y-4">
+        <div>
+          <p className="text-xs uppercase tracking-widest text-muted-foreground mb-1">Patrimonio</p>
+          <h3 className="text-lg font-display font-bold">Evolucao e projecao</h3>
+          <p className="text-sm text-muted-foreground">Sincronize suas contas para visualizar a evolucao patrimonial.</p>
+        </div>
+      </div>
+    );
+  }
+
   const history = patrimony.slice(-6);
-  // simple projection
   const lastNW = patrimony[patrimony.length - 1].netWorth;
-  const avgGrowth = (lastNW - patrimony[patrimony.length - 4].netWorth) / 3;
+  const refIdx = Math.max(0, patrimony.length - 4);
+  const avgGrowth = patrimony.length >= 2
+    ? (lastNW - patrimony[refIdx].netWorth) / Math.max(1, patrimony.length - 1 - refIdx)
+    : 0;
   const projectionData = Array.from({ length: 4 }, (_, i) => ({
     referenceMonth: `Proj ${i + 1}`,
     netWorth: lastNW + avgGrowth * (i + 1),

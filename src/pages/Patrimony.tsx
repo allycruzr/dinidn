@@ -24,7 +24,17 @@ export default function PatrimonyPage() {
   const { patrimony } = useData();
   const latest = patrimony[patrimony.length - 1];
   const prev = patrimony[patrimony.length - 2];
-  const change = ((latest.netWorth - prev.netWorth) / prev.netWorth) * 100;
+  const change = prev && latest ? ((latest.netWorth - prev.netWorth) / prev.netWorth) * 100 : 0;
+
+  if (!latest) {
+    return (
+      <DashboardLayout title="Patrimonio">
+        <div className="space-y-6 max-w-5xl">
+          <p className="text-sm text-muted-foreground">Nenhum dado de patrimonio disponivel. Sincronize suas contas para comecar.</p>
+        </div>
+      </DashboardLayout>
+    );
+  }
 
   return (
     <DashboardLayout title="Patrimônio">
