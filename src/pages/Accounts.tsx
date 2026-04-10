@@ -8,7 +8,7 @@ import { Landmark, TrendingUp, RefreshCw, Database } from "lucide-react";
 
 
 export default function AccountsPage() {
-  const { accounts, openFinanceConnections } = useData();
+  const { accounts, belvoLinks } = useData();
   const checkingAccounts = accounts.filter((a) => a.type !== "CREDIT");
   const totalChecking = checkingAccounts.reduce((s, a) => s + a.balance, 0);
   const totalAll = totalChecking;
@@ -16,8 +16,10 @@ export default function AccountsPage() {
   // Group by institution
   const institutions = [...new Set(accounts.map((a) => a.institution))];
   const institutionStatus = institutions.reduce<Record<string, "Conectado" | "Atenção">>((acc, institution) => {
-    const instConnections = openFinanceConnections.filter((connection) => connection.institution === institution);
-    acc[institution] = instConnections.every((connection) => connection.status === "CONNECTED") ? "Conectado" : "Atenção";
+    const instLinks = belvoLinks.filter((link) => link.institution === institution);
+    acc[institution] = instLinks.length > 0 && instLinks.every((link) => link.status === "valid")
+      ? "Conectado"
+      : "Atenção";
     return acc;
   }, {});
   const healthyConnectors = Object.values(institutionStatus).filter((status) => status === "Conectado").length;
@@ -25,14 +27,16 @@ export default function AccountsPage() {
   const institutionMeta = institutions.reduce<
     Record<string, { products: string; description: string; lastSync: string; status: "Conectado" | "Atenção" }>
   >((acc, institution) => {
-    const instConnections = openFinanceConnections.filter((c) => c.institution === institution);
-    const accountTypes = instConnections.map((c) =>
-      c.type === "CHECKING" ? "Conta" : "Cartão de crédito",
-    );
-    const products = [...new Set(accountTypes)].join(", ");
+    const instAccounts = accounts.filter((a) => a.institution === institution);
+    const instLinks = belvoLinks.filter((link) => link.institution === institution);
 
-    const lastSyncDates = instConnections
-      .map((c) => c.lastSyncedAt)
+    const accountTypes = instAccounts.map((a) =>
+      a.type === "CREDIT" ? "Cartão de crédito" : a.type === "SAVINGS" ? "Poupança" : "Conta",
+    );
+    const products = [...new Set(accountTypes)].join(", ") || "—";
+
+    const lastSyncDates = instLinks
+      .map((link) => link.lastSyncedAt)
       .filter(Boolean) as string[];
     const latestSync =
       lastSyncDates.length > 0
@@ -41,7 +45,7 @@ export default function AccountsPage() {
 
     acc[institution] = {
       products,
-      description: `${instConnections.length} conexão(ões) configurada(s).`,
+      description: `${instLinks.length} conexão(ões) via Open Finance.`,
       lastSync: latestSync,
       status: institutionStatus[institution],
     };
