@@ -3,7 +3,20 @@
     "allow": [
       "Bash(npm run:*)",
       "Bash(npx vite:*)",
-      "Bash(npx vitest:*)"
+      "Bash(npx vitest:*)",
+      "Bash(curl -s \"https://openfinancebrasil.org.br\" -o /dev/null -w \"%{http_code}\")",
+      "Bash(curl -s \"https://docs.pluggy.ai\" -o /dev/null -w \"%{http_code}\")",
+      "Bash(curl -s \"https://belvo.com\" -o /dev/null -w \"%{http_code}\")",
+      "WebSearch",
+      "WebFetch(domain:www.pluggy.ai)",
+      "WebFetch(domain:belvo.com)",
+      "WebFetch(domain:docs.pluggy.ai)",
+      "mcp__supabase__get_project",
+      "mcp__supabase__list_tables",
+      "mcp__supabase__apply_migration",
+      "mcp__supabase__execute_sql",
+      "Bash(bun add:*)",
+      "mcp__supabase__get_advisors"
     ]
   }
 }
